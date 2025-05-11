@@ -182,9 +182,9 @@ fn main() -> io::Result<()> {
     let mut notification_count = 0;
     let mut pairs_found = 0;
 
-    // Write header to output file
-    writeln!(output_file, "Timestamp | Command Type | Write Request | Notification")?;
-    writeln!(output_file, "----------|-------------|---------------|-------------")?;
+    // Write header to output file in a more readable vertical format
+    writeln!(output_file, "Bluetooth Request-Notification Pairs")?;
+    writeln!(output_file, "====================================\n")?;
 
     for line in reader.lines() {
         let line = line?;
@@ -219,15 +219,14 @@ fn main() -> io::Result<()> {
                     // Get command label
                     let command_label = get_command_label(&write_value);
                     
-                    // Write the pair to output file
-                    writeln!(
-                        output_file,
-                        "{} | {} | {} | {}",
-                        packet.timestamp,
-                        command_label,
-                        write_value,
-                        notification_value
-                    )?;
+                    // Write the pair to output file in a more readable vertical format
+                    writeln!(output_file, "Timestamp: {}", packet.timestamp)?;
+                    writeln!(output_file, "Command Type: {}", command_label)?;
+                    writeln!(output_file, "Write Request:")?;
+                    writeln!(output_file, "  {}", write_value)?;
+                    writeln!(output_file, "Notification:")?;
+                    writeln!(output_file, "  {}", notification_value)?;
+                    writeln!(output_file)?; // Add empty line between pairs
                     
                     // Reset write request after we've paired it
                     last_write_request = None;
