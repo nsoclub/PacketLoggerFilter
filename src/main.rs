@@ -19,6 +19,10 @@ struct Args {
     /// Connection handle to filter (optional)
     #[arg(short = 'c', long)]
     handle: Option<String>,
+    
+    /// Process only write requests, even when no notifications are present
+    #[arg(short = 'w', long)]
+    write_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -162,17 +166,29 @@ fn main() -> io::Result<()> {
     
     println!("Starting to process Bluetooth packet capture file: {:?}", args.input);
 
-    let file = File::open(&args.input)?;
+    let file = match File::open(&args.input) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Error opening input file: {}", e);
+            return Err(e);
+        }
+    };
     let reader = BufReader::new(file);
 
     // Store the output path as a string before moving the PathBuf
     let output_path = args.output.to_string_lossy().to_string();
     
-    let mut output_file = OpenOptions::new()
+    let mut output_file = match OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&args.output)?;
+        .open(&args.output) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating output file: {}", e);
+                return Err(e);
+            }
+        };
 
     // Store the most recent write request seen
     let mut last_write_request: Option<BlePacket> = None;
@@ -181,13 +197,21 @@ fn main() -> io::Result<()> {
     let mut write_request_count = 0;
     let mut notification_count = 0;
     let mut pairs_found = 0;
+    let mut write_only_count = 0;
 
     // Write header to output file in a more readable vertical format
     writeln!(output_file, "Bluetooth Request-Notification Pairs")?;
     writeln!(output_file, "====================================\n")?;
 
     for line in reader.lines() {
-        let line = line?;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Error reading line: {}", e);
+                continue;
+            }
+        };
+        
         if let Some(packet) = parse_packet_line(&line) {
             // Filter by connection handle if specified
             if let Some(filter_handle) = &args.handle {
@@ -200,6 +224,26 @@ fn main() -> io::Result<()> {
                 write_request_count += 1;
                 // Debug output
                 println!("Found Write Request: {}", packet.description);
+                
+                // If we're in write_only mode and have a previous write request that hasn't been paired,
+                // process it now before storing the new one
+                if args.write_only && last_write_request.is_some() {
+                    let write_packet = last_write_request.as_ref().unwrap();
+                    write_only_count += 1;
+                    
+                    // Extract values
+                    let write_value = extract_write_value(&write_packet.description).unwrap_or_default();
+                    
+                    // Get command label
+                    let command_label = get_command_label(&write_value);
+                    
+                    // Write the request to output file
+                    writeln!(output_file, "Timestamp: {}", write_packet.timestamp)?;
+                    writeln!(output_file, "Command Type: {}", command_label)?;
+                    writeln!(output_file, "Write Request:")?;
+                    writeln!(output_file, "  {}", write_value)?;
+                    writeln!(output_file)?; // Add empty line
+                }
                 
                 // Save this write request
                 last_write_request = Some(packet);
@@ -231,14 +275,58 @@ fn main() -> io::Result<()> {
                     // Reset write request after we've paired it
                     last_write_request = None;
                 }
+            } else if args.write_only && packet.description.contains("Write Response") {
+                // In write_only mode, consider Write Response as a signal to process the last write request
+                if let Some(write_packet) = &last_write_request {
+                    write_only_count += 1;
+                    
+                    // Extract values
+                    let write_value = extract_write_value(&write_packet.description).unwrap_or_default();
+                    
+                    // Get command label
+                    let command_label = get_command_label(&write_value);
+                    
+                    // Write the request to output file
+                    writeln!(output_file, "Timestamp: {}", write_packet.timestamp)?;
+                    writeln!(output_file, "Command Type: {}", command_label)?;
+                    writeln!(output_file, "Write Request:")?;
+                    writeln!(output_file, "  {}", write_value)?;
+                    writeln!(output_file)?; // Add empty line
+                    
+                    // Reset write request
+                    last_write_request = None;
+                }
             }
         }
+    }
+
+    // Process any remaining write request in write_only mode
+    if args.write_only && last_write_request.is_some() {
+        let write_packet = last_write_request.as_ref().unwrap();
+        write_only_count += 1;
+        
+        // Extract values
+        let write_value = extract_write_value(&write_packet.description).unwrap_or_default();
+        
+        // Get command label
+        let command_label = get_command_label(&write_value);
+        
+        // Write the request to output file
+        writeln!(output_file, "Timestamp: {}", write_packet.timestamp)?;
+        writeln!(output_file, "Command Type: {}", command_label)?;
+        writeln!(output_file, "Write Request:")?;
+        writeln!(output_file, "  {}", write_value)?;
+        writeln!(output_file)?; // Add empty line
     }
 
     println!("Processing complete. Statistics:");
     println!("  Write Requests found: {}", write_request_count);
     println!("  Notifications found: {}", notification_count);
-    println!("  Pairs matched: {}", pairs_found);
+    if args.write_only {
+        println!("  Write-only entries processed: {}", write_only_count);
+    } else {
+        println!("  Pairs matched: {}", pairs_found);
+    }
     println!("Results written to: {}", output_path);
     
     Ok(())
