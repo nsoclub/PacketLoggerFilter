@@ -1,0 +1,9 @@
+[package]
+name = "ble_packet_filter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+regex = "1.10.2"
+clap = { version = "4.4", features = ["derive"] }
